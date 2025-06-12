@@ -25,7 +25,6 @@ geopandas
 xarray
 pyproj
 torchmetrics>=0.11.0
-gdal
 shapely
 geojson
 torch-geometric

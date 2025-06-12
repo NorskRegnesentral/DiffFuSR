@@ -6,3 +6,4 @@ visualization_partial/
 
 # pychache 
 __pycache__/
+.venv

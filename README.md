@@ -8,8 +8,8 @@
 
 ```bash
 # ❶ Create a virtual environment (optional but recommended)
-python -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate          # Windows: venv\Scripts\activate
 
 # ❷ Install all Python dependencies
 pip install -r requirements.txt
