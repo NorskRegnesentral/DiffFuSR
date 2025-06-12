@@ -1,0 +1,9 @@
+load/
+logs/
+venv/
+visualization/
+visualization_partial/
+
+# pychache 
+__pycache__/
+.venv
