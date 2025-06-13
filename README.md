@@ -14,6 +14,12 @@ source .venv/bin/activate          # Windows: venv\Scripts\activate
 # ❷ Install all Python dependencies
 pip install -r requirements.txt
 ```
+Get the weights from link and skip training steps below to directly test the full model by going to Step 2 a. Download the test set and Step 4 , Test the complete SR + Fusion pipeline
+
+```bash
+Link: https://huggingface.co/msarmad/DiffFuSR
+
+```
 
 ## 1. Train the Super-Resolution (SR) models
 
