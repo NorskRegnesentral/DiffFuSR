@@ -17,7 +17,7 @@ pip install -r requirements.txt
 Get the weights from link and skip training steps below to directly test the full model by going to Step 2 a. Download the test set and Step 4 , Test the complete SR + Fusion pipeline
 
 ```bash
-Link: https://huggingface.co/msarmad/DiffFuSR
+Link: https://huggingface.co/NorskRegnesentralSTI/DiffFuSR
 
 ```
 
