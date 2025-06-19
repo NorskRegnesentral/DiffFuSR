@@ -4,10 +4,10 @@
 
 ---
 
-## 0. Environment setup
+## 0. Environment setup 
 
 ```bash
-# ❶ Create a virtual environment (optional but recommended) Python version I used 3.11.4
+# ❶ Create a virtual environment (optional but recommended) Python version used 3.11.4
 python -m venv .venv
 source .venv/bin/activate          # Windows: venv\Scripts\activate
 
