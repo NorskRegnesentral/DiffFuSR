@@ -14,12 +14,8 @@ source .venv/bin/activate          # Windows: venv\Scripts\activate
 # ❷ Install all Python dependencies
 pip install -r requirements.txt
 ```
-Get the weights from link and skip training steps below to directly test the full model by going to Step 2 a. Download the test set and Step 4 , Test the complete SR + Fusion pipeline
 
-```bash
-Link: https://huggingface.co/NorskRegnesentralSTI/DiffFuSR
-
-```
+To directly download and test our pretrained checkpoints, skip diretly to Step 2a.
 
 ## 1. Train the Super-Resolution (SR) models
 
@@ -46,11 +42,10 @@ Each run will create a Lightning log directory such as `logs/blindsrsnf_aniso_na
 
 ### 2 a. Download the test set
 
-```bash
-Destination: load/opensrtest/100 
-Link: https://huggingface.co/datasets/isp-uv-es/opensr-test/tree/main/100
-python download_opensr_test.py
 
+
+```bash
+python download_opensr_test.py
 ```
 
 ### 2 b. Split Gather all LR/HR pairs to a common folder
@@ -58,30 +53,32 @@ It will use lr_files_list.txt to dump all low and high resolution images.
 
 ```bash
 python 0_prepare_open_sr_test_data.py 
-creates `load/opensrtest/100/lr/` and `.../hr/`from subfolders
 ```
 
 ### 2 c. Place pretrained checkpoints
+The following checkpoints are available:
+- WorldStrat SR
+- NAIP-no-harm SR (No Harmonization)
+- NAIP-harm SR (with harmonization)
+Checkpoints are stored at [https://huggingface.co/NorskRegnesentralSTI/DiffFuSR](https://huggingface.co/NorskRegnesentralSTI/DiffFuSR). Download them using:
 
-| Model            | Expected path                                                                 |
-|------------------|------------------------------------------------------------------------------|
-| WorldStrat SR    | logs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large/version_7/checkpoints/last.ckpt |
-| NAIP-no-harm SR (No Harmonization)  | logs/blindsrsnf_aniso_naip_degraded_not_harm_large/version_0/checkpoints/last.ckpt |
-| NAIP-harm SR (with harmonization)    | logs/blindsrsnf_aniso_naip_degraded_harm_large/version_1/checkpoints/last.ckpt |
+```bash
+git lfs install
+git clone https://huggingface.co/NorskRegnesentralSTI/DiffFuSR && mv DiffFuSR/logs logs
+```
 
 ### 2 d. Run the RGB test script needed for open sr test
 
 ```bash
-python 2_test_rgb_for_opensr_metric.py 
+python 2_test_rgb_for_opensr_metric.py
 ```
---checkpoint flag can be changed to test all three models. WorldStrat SR, NAIP-no-harm SR (No Harmonization) and  NAIP-harm SR (with harmonization).
+`--checkpoint` flag can be changed to test all three models. WorldStrat SR, NAIP-no-harm SR (No Harmonization) and  NAIP-harm SR (with harmonization).
 SR outputs are saved under the corresponding `logs/.../sr/` directory.
 
 ### 2 e. Re-package results for Open SR metric computation
 it will produce folder diffsr in logs folder which will be used in next step.
 ```bash
 python 3_preprocess_for_opensrtest.py
-
 ```
 
 ### 2 f. Compute OpenSR metrics
@@ -101,7 +98,6 @@ Run:
 
 ```bash
 python 5_train_fusion.py 
-
 ```
 
 The model checkpoints are saved in `logs/GSD/`.
@@ -119,7 +115,7 @@ python 6_test_multispectral_SR_fuse.py
 ## 5. Benchmark the full pipeline
 to bechmark the whole SR + fusion pipeline
 ```bash
-python 7_benchmark_DiffFuSR.py 
+python 7_benchmark_DiffFuSR.py
 ```
 
 The script prints all metrics
