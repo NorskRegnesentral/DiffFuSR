@@ -1,9 +1,11 @@
 #@title **Function to download pre-computed SR images**
-import requests
 import pathlib
+from typing import Optional
+
 import opensr_test
 import pandas as pd
-from typing import Optional
+import requests
+
 
 def downloadSR(
     model_id: str,
@@ -61,10 +63,10 @@ def downloadSR(
 
 #@title **Function to compute metrics**
 from typing import Optional
+
 import matplotlib.pyplot as plt
-import rioxarray as rxr
 import numpy as np
-import opensr_test
+import rioxarray as rxr
 import torch
 
 

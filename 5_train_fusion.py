@@ -1,17 +1,16 @@
 import random
 
 import numpy as np
+import pytorch_lightning as pl
 import torch
+from pytorch_lightning import loggers
+from pytorch_lightning.callbacks import ModelCheckpoint
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from fm4cs.data.fm4cs_footprint_builder import FootprintBuilder
 from fm4cs.data.fm4cs_iterable_dataset_v2 import FM4CSIterableDatasetV2
 from fm4cs.model import FusionNetwork
-from torchmetrics.image import ErrorRelativeGlobalDimensionlessSynthesis
-import pytorch_lightning as pl
-from pytorch_lightning import loggers
-from pytorch_lightning.callbacks import ModelCheckpoint
 
 seed = 42
 

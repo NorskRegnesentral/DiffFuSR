@@ -1,26 +1,22 @@
 import argparse
 import os
+import random
+import shutil
 
 import numpy as np
+import tifffile
 import torch
-from litsr.data import PairedImageDataset, SingleImageDataset, DownsampledDataset
-from litsr.metrics import calc_fid
-from litsr.utils import mkdirs, read_yaml
-from matplotlib import pyplot as plt
+import torch.nn.functional as F
 from pytorch_lightning import seed_everything
 from tqdm import tqdm
-import random
-import tifffile
-from models.fusion_model import FusionNetwork
+
+from litsr.data import PairedImageDataset
+from litsr.transforms import tensor2uint8
+from litsr.utils import mkdirs, read_yaml
 from models import load_model
-import numpy as np
-import skimage
+from models.fusion_model import FusionNetwork
+
 seed_everything(123)
-import torch
-import torch.nn as nn
-from litsr.transforms import denormalize, normalize, tensor2uint8
-import torch.nn.functional as F
-import shutil
 
 BAND_STATS = {
     "S2-10m": {
