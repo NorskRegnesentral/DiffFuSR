@@ -209,8 +209,7 @@ def normalize_denormalize(x, mode='normalize', signal_type='fusion'):
     else:  # denormalize
         return x * stds + means
 
-    #        lr_path="/nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/load/opensrtest/100/lr", multi_spectral=True,channels=12, # /nr/bamjo/user/msarmad/Work/SuperAI/BlindSRSNF/load/WorldStrat_dest_c3
-       # hr_path="/nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/load/opensrtest/100/hr_pan",#
+
 #
 def make_dataloaders(scale, config):
 
@@ -231,10 +230,8 @@ def make_dataloaders(scale, config):
         shutil.rmtree(bin_cache_path)
 
     dataset = PairedImageDataset(
-        # lr_path="/nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/load/WorldStrat_c12_no_stretch/test/LR", multi_spectral=True,channels=12, # /nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/load/WorldStrat_c12_no_stretch/test/LR
-        # hr_path="/nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/load/WorldStrat_c12_no_stretch/test/HR",#/nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/load/opensrtest/100/lr /nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/load/WorldStrat_c12_no_stretch/test/HR
-        lr_path="/nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/load/opensrtest/100/lr_12", multi_spectral=True,channels=12, # /nr/bamjo/user/msarmad/Work/SuperAI/BlindSRSNF/load/WorldStrat_dest_c3
-        hr_path="/nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/load/opensrtest/100/hr_pan",#
+        lr_path="load/opensrtest/100/lr", multi_spectral=True,channels=12, # 
+        hr_path="load/opensrtest/100/hr_pan",#
         scale=scale,
         is_train=False,
         cache="bin",
@@ -395,18 +392,13 @@ def test(args):
         mean_runtime = np.array(run_times[1:]).mean()
         print("- Runtime : {:.4f}".format(mean_runtime))
 
-    #hr_path = "/nr/bamjo/user/msarmad/Work/SuperAI/BlindSRSNF/load/WorldStrat_c3/test/HR"
-    #paths = [rslt_path, hr_path]
-    #f3id_score = calc_fid(paths)
-    #print("- FID : {:.4f}".format(fid_score))
-    #print("=" * 42)
 
 
 def getTestParser():
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--checkpoint", default='logs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large/version_7/checkpoints/last.ckpt', type=str, help="checkpoint index") #logs/blindsrsnf_aniso_jif/version_0/checkpoints/last.ckpt
     parser.add_argument(
-        "-g", "--gpu", default="3", type=str, help="indices of GPUs to enable"
+        "-g", "--gpu", default="0", type=str, help="indices of GPUs to enable"
     )
     parser.add_argument("--random_seed", action="store_true")
     parser.add_argument("--use_gs", default=True, action="store_true", help="Use Gram-Schmidt fusion instead of Neural Network fusion")
