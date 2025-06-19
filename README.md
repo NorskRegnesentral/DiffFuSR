@@ -15,10 +15,7 @@ source .venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Get the weights from link and skip training steps below to directly test the full model by going to Step 2 a. Download the test set and Step 4 , Test the complete SR + Fusion pipeline
-
-[https://huggingface.co/NorskRegnesentralSTI/DiffFuSR](https://huggingface.co/NorskRegnesentralSTI/DiffFuSR)
-
+To directly download and test our pretrained checkpoints, skip diretly to Step 2a.
 
 ## 1. Train the Super-Resolution (SR) models
 
@@ -45,6 +42,8 @@ Each run will create a Lightning log directory such as `logs/blindsrsnf_aniso_na
 
 ### 2 a. Download the test set
 
+
+
 ```bash
 python download_opensr_test.py
 ```
@@ -57,10 +56,11 @@ python 0_prepare_open_sr_test_data.py
 ```
 
 ### 2 c. Place pretrained checkpoints
-Download the following checkpoints:
+The following checkpoints are available:
 - WorldStrat SR
 - NAIP-no-harm SR (No Harmonization)
 - NAIP-harm SR (with harmonization)
+Checkpoints are stored at [https://huggingface.co/NorskRegnesentralSTI/DiffFuSR](https://huggingface.co/NorskRegnesentralSTI/DiffFuSR). Download them using:
 
 ```bash
 git lfs install
@@ -72,14 +72,13 @@ git clone https://huggingface.co/NorskRegnesentralSTI/DiffFuSR && mv DiffFuSR/lo
 ```bash
 python 2_test_rgb_for_opensr_metric.py
 ```
---checkpoint flag can be changed to test all three models. WorldStrat SR, NAIP-no-harm SR (No Harmonization) and  NAIP-harm SR (with harmonization).
+`--checkpoint` flag can be changed to test all three models. WorldStrat SR, NAIP-no-harm SR (No Harmonization) and  NAIP-harm SR (with harmonization).
 SR outputs are saved under the corresponding `logs/.../sr/` directory.
 
 ### 2 e. Re-package results for Open SR metric computation
 it will produce folder diffsr in logs folder which will be used in next step.
 ```bash
 python 3_preprocess_for_opensrtest.py
-
 ```
 
 ### 2 f. Compute OpenSR metrics
@@ -99,7 +98,6 @@ Run:
 
 ```bash
 python 5_train_fusion.py 
-
 ```
 
 The model checkpoints are saved in `logs/GSD/`.
@@ -117,7 +115,7 @@ python 6_test_multispectral_SR_fuse.py
 ## 5. Benchmark the full pipeline
 to bechmark the whole SR + fusion pipeline
 ```bash
-python 7_benchmark_DiffFuSR.py 
+python 7_benchmark_DiffFuSR.py
 ```
 
 The script prints all metrics
