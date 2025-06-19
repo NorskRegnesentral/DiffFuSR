@@ -80,7 +80,7 @@ git clone https://huggingface.co/NorskRegnesentralSTI/DiffFuSR && mv DiffFuSR/lo
 ```bash
 python 2_test_rgb_for_opensr_metric.py
 ```
-
+--checkpoint flag can be changed to test all three models. WorldStrat SR, NAIP-no-harm SR (No Harmonization) and  NAIP-harm SR (with harmonization).
 SR outputs are saved under the corresponding `logs/.../sr/` directory.
 
 ### 2 e. Re-package results for Open SR metric computation
@@ -114,6 +114,8 @@ The model checkpoints are saved in `logs/GSD/`.
 
 ## 4. Test the complete SR + Fusion pipeline
 Test using pretrained model using and the comlete super-resolutiona nd fusion pipeline. Select the correct flag desired. Either use Gram Schmidt or Neural Network for fusion. For neural network a pre-trained weight are required. Also chose the super-resolution model to be used.
+
+Downloads weight for fusion module must be in `logs/GSD/`.
 
 ```bash
 python 6_test_multispectral_SR_fuse.py 
