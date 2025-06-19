@@ -48,7 +48,8 @@ Each run will create a Lightning log directory such as `logs/blindsrsnf_aniso_na
 
 ```bash
 Destination: load/opensrtest/100 
-Link: https://huggingface.co/datasets/isp-uv-es/opensr-test/resolve/main/100/
+Link: https://huggingface.co/datasets/isp-uv-es/opensr-test/tree/main/100
+python download_opensr_test.py
 
 ```
 
