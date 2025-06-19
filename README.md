@@ -45,16 +45,8 @@ Each run will create a Lightning log directory such as `logs/blindsrsnf_aniso_na
 
 ### 2 a. Download the test set
 
-```python
-from huggingface_hub import snapshot_download
-
-snapshot_download(
-    repo_id="isp-uv-es/opensr-test",
-    repo_type="dataset",
-    local_dir="load/opensrtest",
-    allow_patterns=["100/*"]
-)
-
+```bash
+python download_opensr_test.py
 ```
 
 ### 2 b. Split Gather all LR/HR pairs to a common folder
