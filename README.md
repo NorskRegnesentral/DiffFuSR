@@ -14,12 +14,11 @@ source .venv/bin/activate          # Windows: venv\Scripts\activate
 # ❷ Install all Python dependencies
 pip install -r requirements.txt
 ```
+
 Get the weights from link and skip training steps below to directly test the full model by going to Step 2 a. Download the test set and Step 4 , Test the complete SR + Fusion pipeline
 
-```bash
-Link: https://huggingface.co/NorskRegnesentralSTI/DiffFuSR
+[https://huggingface.co/NorskRegnesentralSTI/DiffFuSR](https://huggingface.co/NorskRegnesentralSTI/DiffFuSR)
 
-```
 
 ## 1. Train the Super-Resolution (SR) models
 
@@ -46,9 +45,15 @@ Each run will create a Lightning log directory such as `logs/blindsrsnf_aniso_na
 
 ### 2 a. Download the test set
 
-```bash
-Destination: load/opensrtest/100 
-Link: https://huggingface.co/datasets/isp-uv-es/opensr-test/resolve/main/100/
+```python
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="isp-uv-es/opensr-test",
+    repo_type="dataset",
+    local_dir="load/opensrtest",
+    allow_patterns=["100/*"]
+)
 
 ```
 
@@ -57,21 +62,23 @@ It will use lr_files_list.txt to dump all low and high resolution images.
 
 ```bash
 python 0_prepare_open_sr_test_data.py 
-creates `load/opensrtest/100/lr/` and `.../hr/`from subfolders
 ```
 
 ### 2 c. Place pretrained checkpoints
+Download the following checkpoints:
+- WorldStrat SR
+- NAIP-no-harm SR (No Harmonization)
+- NAIP-harm SR (with harmonization)
 
-| Model            | Expected path                                                                 |
-|------------------|------------------------------------------------------------------------------|
-| WorldStrat SR    | logs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large/version_7/checkpoints/last.ckpt |
-| NAIP-no-harm SR (No Harmonization)  | logs/blindsrsnf_aniso_naip_degraded_not_harm_large/version_0/checkpoints/last.ckpt |
-| NAIP-harm SR (with harmonization)    | logs/blindsrsnf_aniso_naip_degraded_harm_large/version_1/checkpoints/last.ckpt |
+```bash
+git lfs install
+git clone https://huggingface.co/NorskRegnesentralSTI/DiffFuSR && mv DiffFuSR/logs logs
+```
 
 ### 2 d. Run the RGB test script needed for open sr test
 
 ```bash
-python 2_test_rgb_for_opensr_metric.py 
+python 2_test_rgb_for_opensr_metric.py
 ```
 
 SR outputs are saved under the corresponding `logs/.../sr/` directory.
