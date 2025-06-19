@@ -1,11 +1,11 @@
 import argparse
 
 import torch
-from litsr.utils import read_yaml
 from pytorch_lightning import Trainer, loggers
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 from data import create_data_module
+from litsr.utils import read_yaml
 from models import create_model, load_model
 
 torch.backends.cudnn.benchmark = True

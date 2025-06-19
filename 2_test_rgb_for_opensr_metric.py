@@ -1,20 +1,18 @@
 import argparse
 import os
+import random
+import shutil
 
 import numpy as np
+import rasterio
+import tifffile
 import torch
-from litsr.data import PairedImageDataset, SingleImageDataset, DownsampledDataset
-from litsr.metrics import calc_fid
-from litsr.utils import mkdirs, read_yaml
-from matplotlib import pyplot as plt
 from pytorch_lightning import seed_everything
 from tqdm import tqdm
-import random
-import tifffile
-import rasterio
-from rasterio.transform import from_origin
+
+from litsr.data import SingleImageDataset
+from litsr.utils import mkdirs, read_yaml
 from models import load_model
-import shutil
 
 
 def make_dataloaders(scale, config):
