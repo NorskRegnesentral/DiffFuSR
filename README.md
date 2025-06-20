@@ -1,4 +1,4 @@
-# Code for DiffFuSR: Super-Resolution of all Sentinel-2 Multispectral Bands using Diffusion Models
+# DiffFuSR: Super-Resolution of all Sentinel-2 Multispectral Bands using Diffusion Models
 
 > _Train and evaluate RGB SR models, multispectral fusion networks, and OpenSR metrics._
 
