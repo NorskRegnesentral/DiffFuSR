@@ -156,7 +156,7 @@ def test(args):
    
 def getTestParser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--checkpoint", default='logs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large/version_7/checkpoints/last.ckpt', type=str, help="checkpoint index") #logs/blindsrsnf_aniso_jif/version_0/checkpoints/last.ckpt # /nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/logs/blindsrsnf_iso_naip_synthetic_degraded_harm/version_1/checkpoints/last.ckpt
+    parser.add_argument("-c", "--checkpoint", default='logs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large/version_7/checkpoints/last.ckpt', type=str, help="checkpoint index") #
     parser.add_argument(
         "-g", "--gpu", default="0", type=str, help="indices of GPUs to enable" # change to number 0 to n based on number of GPUs if needed.
     )

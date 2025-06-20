@@ -46,16 +46,6 @@ def train_pipeline(args):
         "callbacks": [checkpoint_period, checkpoint_best],
         "max_epochs": config.trainer.max_epochs,
     }
-    # trainer_args = {
-    #     "accelerator": [int(g) for g in args.accelerator.split(",")],
-    #     "logger": logger,
-    #     "default_root_dir": args.save_path,
-    #     "limit_val_batches": 20,
-    #     "check_val_every_n_epoch": config.trainer.check_val_every_n_epoch,
-    #     "reload_dataloaders_every_n_epochs": 0,
-    #     "callbacks": [checkpoint_period, checkpoint_best],
-    #     "max_epochs": config.trainer.max_epochs,
-    # }
 
     if args.resume:
         trainer_args["resume_from_checkpoint"] = args.resume
@@ -72,18 +62,18 @@ def train_pipeline(args):
 
 def getTrainParser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--config", default="/nr/bamjo/projects/SuperAI/usr/sarmad/difffusr/configs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large.yaml", type=str, help="config file path") # /nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/configs/blindsrsnf_aniso_jif.yaml configs/blindsrsnf_aniso_Zarr_JIF.yaml  configs/blindsrsnf_aniso_jif.yaml
-    parser.add_argument( # /nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/configs/blindsrsnf_aniso_Zarr_JIF.yaml
+    parser.add_argument("-c", "--config", default="configs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large.yaml", type=str, help="config file path") # 
+    parser.add_argument( # 
         "-r", 
         "--resume",
-        default= None, #'logs/blindsrsnf_aniso_jif/version_1/checkpoints/last.ckpt', #
+        default= None, #
         type=str,
         help="path to latest checkpoint (default: None)",
     )
     parser.add_argument(
         "-f",#
         "--finetune",
-        default= None, #'logs/blindsrsnf_aniso_jif/version_1/checkpoints', 
+        default= None, 
         type=str,
         help="path to checkpoint (default: None)",
     )
@@ -92,13 +82,6 @@ def getTrainParser():
     parser.add_argument("--devices",     default="2",  type=str,
                         help="Comma-separated list of device ids, "
                             "or an int for the number of devices")
-    # parser.add_argument(
-    #     "-g",
-    #     "--accelerator",
-    #     default="1",#gpus=[0, 1] 2, 3
-    #     type=str,
-    #     help="indices of GPUs to enable (default: 0)",
-    # )
     parser.add_argument("-s", "--save_path", default="logs", type=str, help="save path")
     parser.add_argument("-e", "--expname", default="", type=str, help="save path")
 
