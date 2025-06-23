@@ -1,16 +1,14 @@
-import numpy as np
-from sklearn.metrics import r2_score
-from scipy.signal import correlate2d
-from skimage.metrics import structural_similarity as ssim
-from skimage.metrics import peak_signal_noise_ratio as psnr
-from skimage.metrics import mean_squared_error as mse
-import tifffile as tiff
-from typing import Iterable, Optional
-from skimage.transform import rescale
-import torch
 import os
+from typing import Optional
+
+import numpy as np
+import tifffile as tiff
+import torch
 from PIL import Image
-from litsr.metrics import calc_fid
+from skimage.metrics import mean_squared_error as mse
+from skimage.metrics import peak_signal_noise_ratio as psnr
+from skimage.metrics import structural_similarity as ssim
+from sklearn.metrics import r2_score
 
 
 def gaussian_downsample(tensor, scale_factor=0.25, kernel_size=8, sigma=3.0):

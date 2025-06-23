@@ -1,9 +1,7 @@
-
-
 import os
 import shutil
 import re
-from pathlib import Path
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -131,6 +129,35 @@ os.makedirs(lr_path, exist_ok=True)
 os.makedirs(hr_path, exist_ok=True)
 os.makedirs(hr_pan_path, exist_ok=True)
 
+def is_valid_tiff(file_path):
+    """
+    Validate if a file is a proper TIFF file (not an auxiliary file or directory)
+    Args:
+        file_path: Path to the file to validate
+    Returns:
+        bool: True if file is a valid TIFF, False otherwise
+    """
+    # Skip directories
+    if os.path.isdir(file_path):
+        return False
+        
+    # Skip auxiliary files
+    if file_path.endswith('.aux.xml') or file_path.endswith('.tif.xml'):
+        return False
+        
+    # Check if it's a .tif file
+    if not file_path.lower().endswith('.tif'):
+        return False
+        
+    # Try to open with rasterio to validate it's a proper TIFF
+    try:
+        with rasterio.open(file_path) as src:
+            # Check if we can read at least one band
+            _ = src.read(1)
+        return True
+    except Exception:
+        return False
+
 # Define the mapping rules for each dataset
 mapping_rules = {
     "naip": {
@@ -191,24 +218,35 @@ def copy_lr_files_from_subfolders():
         print(f"Processing {dataset} subfolder...")
         
         for file in os.listdir(lr_subfolder_path):
-            if file.endswith('.tif'):
-                # If we have a specific list, check if this file should be copied
-                if lr_files_to_copy is not None and file not in lr_files_to_copy:
-                    continue
-                    
-                source_path = os.path.join(lr_subfolder_path, file)
-                dest_path = os.path.join(lr_path, file)
+            source_path = os.path.join(lr_subfolder_path, file)
+            
+            # Validate if it's a proper TIFF file
+            if not is_valid_tiff(source_path):
+                continue
                 
-                # Copy the file
-                shutil.copy2(source_path, dest_path)
-                print(f"  Copied {file} from {dataset}")
-                copied_count += 1
+            # If we have a specific list, check if this file should be copied
+            if lr_files_to_copy is not None and file not in lr_files_to_copy:
+                continue
+                
+            dest_path = os.path.join(lr_path, file)
+            
+            # Copy the file
+            shutil.copy2(source_path, dest_path)
+            print(f"  Copied {file} from {dataset}")
+            copied_count += 1
     
     print(f"Total LR files copied: {copied_count}")
     return copied_count
 
 def find_matching_hr(lr_file, dataset):
-    """Find matching HR file based on ROI number"""
+    """
+    Find matching HR file based on ROI number and validate it's a proper TIFF file
+    Args:
+        lr_file: Path to the LR file
+        dataset: Dataset name to use for matching rules
+    Returns:
+        str: Path to matching HR file if found and valid, None otherwise
+    """
     rule = mapping_rules[dataset]
     lr_match = re.match(rule["lr_pattern"], os.path.basename(lr_file))
     if not lr_match:
@@ -221,8 +259,15 @@ def find_matching_hr(lr_file, dataset):
         return None
     
     for hr_file in os.listdir(hr_dir):
+        hr_path = os.path.join(hr_dir, hr_file)
+        
+        # Skip if not a valid TIFF file
+        if not is_valid_tiff(hr_path):
+            continue
+            
+        # Check if it matches the pattern
         if re.match(rule["hr_pattern"].replace("\\1", roi_num), hr_file):
-            return os.path.join(hr_dir, hr_file)
+            return hr_path
     
     return None
 
@@ -265,14 +310,17 @@ def main():
     pansharpened_count = 0
     
     for lr_file in os.listdir(lr_path):
-        if not lr_file.endswith('.tif'):
+        lr_full_path = os.path.join(lr_path, lr_file)
+        
+        # Validate if LR is a proper TIFF file
+        if not is_valid_tiff(lr_full_path):
             continue
             
-        lr_full_path = os.path.join(lr_path, lr_file)
         hr_full_path = os.path.join(hr_path, lr_file)
         
-        if not os.path.exists(hr_full_path):
-            print(f"  Warning: Missing HR pair for {lr_file}")
+        # Validate if HR exists and is a proper TIFF file
+        if not os.path.exists(hr_full_path) or not is_valid_tiff(hr_full_path):
+            print(f"  Warning: Missing or invalid HR pair for {lr_file}")
             continue
             
         try:
@@ -325,7 +373,7 @@ def main():
         except Exception as e:
             print(f"  Error processing {lr_file}: {str(e)}")
     
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  LR files copied: {lr_files_copied}")
     print(f"  HR files copied: {hr_copied_count}")
     print(f"  Pansharpened files created: {pansharpened_count}")

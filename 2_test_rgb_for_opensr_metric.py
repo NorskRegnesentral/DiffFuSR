@@ -1,20 +1,18 @@
 import argparse
 import os
+import random
+import shutil
 
 import numpy as np
+import rasterio
+import tifffile
 import torch
-from litsr.data import PairedImageDataset, SingleImageDataset, DownsampledDataset
-from litsr.metrics import calc_fid
-from litsr.utils import mkdirs, read_yaml
-from matplotlib import pyplot as plt
 from pytorch_lightning import seed_everything
 from tqdm import tqdm
-import random
-import tifffile
-import rasterio
-from rasterio.transform import from_origin
+
+from litsr.data import SingleImageDataset
+from litsr.utils import mkdirs, read_yaml
 from models import load_model
-import shutil
 
 
 def make_dataloaders(scale, config):
@@ -104,9 +102,7 @@ def test(args):
             #plt.imsave(file_path, rslt["log_img_sr"])
             tifffile.imwrite(file_path, rslt["log_img_sr"].transpose(2, 0, 1), planarconfig='separate')  
         if "sr_raw" in rslt.keys():
-            #if isinstance(rslt["sr_raw"], torch.Tensor):
-            #print(np.max(rslt["sr_raw"].transpose(1, 2, 0)))
-            #rslt["sr_raw"] = (rslt["sr_raw"].transpose(1, 2, 0)*10000).astype(np.uint16)
+
             rslt["sr_raw"] = ((rslt["log_img_sr"]/255)*10000).astype(np.uint16)
 
 
@@ -157,18 +153,12 @@ def test(args):
         mean_runtime = np.array(run_times[1:]).mean()
         print("- Runtime : {:.4f}".format(mean_runtime))
 
-    #hr_path = "/nr/bamjo/user/msarmad/Work/SuperAI/BlindSRSNF/load/WorldStrat_c3/test/HR"
-    #paths = [rslt_path, hr_path]
-    #f3id_score = calc_fid(paths)
-    #print("- FID : {:.4f}".format(fid_score))
-    #print("=" * 42)
-
-#/nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/logs/blindsrsnf_iso_naip_synthetic_degraded/version_18/checkpoints/last.ckpt, /nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/logs/blindsrsnf_aniso/version_0/checkpoints/last.ckpt
+   
 def getTestParser():
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--checkpoint", default='logs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large/version_7/checkpoints/last.ckpt', type=str, help="checkpoint index") #logs/blindsrsnf_aniso_jif/version_0/checkpoints/last.ckpt # /nr/bamjo/projects/SuperAI/usr/sarmad/BlindSRSNF/logs/blindsrsnf_iso_naip_synthetic_degraded_harm/version_1/checkpoints/last.ckpt
+    parser.add_argument("-c", "--checkpoint", default='logs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large/version_7/checkpoints/last.ckpt', type=str, help="checkpoint index") #
     parser.add_argument(
-        "-g", "--gpu", default="2", type=str, help="indices of GPUs to enable"
+        "-g", "--gpu", default="0", type=str, help="indices of GPUs to enable" # change to number 0 to n based on number of GPUs if needed.
     )
     parser.add_argument("--random_seed", action="store_true")
 

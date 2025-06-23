@@ -1,8 +1,6 @@
-# 
-import os   
+import os
+
 # Now load the data from a global folder that has names as LR iamges
-import tifffile
-import rasterio
 
 path_to_lr = "logs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large/version_7/results/worldstrat/opensrtest"
 path_to_hr = "logs/blindsrsnf_aniso_worldstrat_degraded_harmfac_10000_large/version_7/results/worldstrat/diffsr/results/SR/"
@@ -30,10 +28,7 @@ path_to_hr_spain_urban = "load/opensrtest/100/spain_urban/hr"
 path_to_hr_venus = "load/opensrtest/100/venus/hr"
 
 
-# in Naip Name of the files in the directory only has ROI_**** in common so match the files based on this pattern
-# e.g load/opensrtest/100/naip/hr/HR__ROI_00006__m_4411338_ne_12_060_20210917.tif
-# e.g load/opensrtest/100/naip/L2A/ROI_00006__20210917T182021_20210917T182233_T11TQK.tif
-# first making naip dictionary so store full name of HR image for each LR image
+
 naip_dict = {}
 for file_hr in os.listdir(path_to_hr_naip):
     # find the file in LR directory that has the same ROI_**** pattern
