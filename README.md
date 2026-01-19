@@ -97,10 +97,13 @@ python 4_opensr.py
 The script writes a CSV file with OpenSR metrics. Open it in and process in Excel to obtain averages and variance across all test images. 
 
 ## 3. Train the Fusion (multispectral) model
-Train Fusion Model, by using data from Norwegian computing Center project FM4CS. The data is not released yet but the list of tiles used in included.
- The list of tiles used is in the text file. The data has not been released but any Sentinel-2 data can be used to train this as long as you have very large tiles available for sampling.
+The fusion model is trained on the Norwegian Computing Center FM4CS dataset, released at
+[FM4CS/THOR-Pretrain](https://huggingface.co/datasets/FM4CS/THOR-Pretrain).
+The full dataset is too large to download in full.
 
-Input tiles: list is in `list_fusion_train.txt` .
+We provide the list of tiles used for training in `list_fusion_train.txt`.
+If you build a better downloader that fetches only those tiles, a pull request is welcome.
+
 
 
 
@@ -163,4 +166,3 @@ https://github.com/hanlinwu/BlindSRSNF
 https://github.com/ESAOpenSR/opensr-test
 
 https://github.com/esaOpenSR/opensr-degradation/
-
