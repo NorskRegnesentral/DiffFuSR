@@ -263,7 +263,7 @@ def test(args):
 
     model_fusion = FusionNetwork(mode='eval')   
     model_fusion.to(device)
-    model_fusion.load_state_dict(torch.load('logs/GSD/lightning_logs/version_35/checkpoints/best-GSD-epoch=13-metric_val=4.695-loss_train=0.0329.ckpt')['state_dict'])
+    model_fusion.load_state_dict(torch.load('logs/GSD/lightning_logs/version_64/checkpoints/latest-GSD-epoch=45-metric_val=0.667-loss_train=0.0368 copy.ckpt')['state_dict'])
     #model_fusion.to(device)
     model_fusion.eval()
 
@@ -397,7 +397,7 @@ def getTestParser():
         "-g", "--gpu", default="0", type=str, help="indices of GPUs to enable"
     )
     parser.add_argument("--random_seed", action="store_true")
-    parser.add_argument("--use_gs", default=True, action="store_true", help="Use Gram-Schmidt fusion instead of Neural Network fusion")
+    parser.add_argument("--use_gs", default=False, action="store_true", help="Use Gram-Schmidt fusion instead of Neural Network fusion")
 
     return parser
 

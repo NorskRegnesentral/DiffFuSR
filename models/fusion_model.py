@@ -6,7 +6,7 @@ from torch.nn.functional import interpolate
 import torchvision.transforms as transforms
 from torch import Tensor
 import torch.nn.functional as F
-
+import numpy as np
 
 from torchmetrics.image import ErrorRelativeGlobalDimensionlessSynthesis
 ergas = ErrorRelativeGlobalDimensionlessSynthesis()  
@@ -61,11 +61,6 @@ class AdaIN(nn.Module):
         )
         normalized = (content_feat - content_mean) / content_std
         return normalized * style_std + style_mean
-# ablation: use adain or not
-# use drop out or not
-#use noise augmention for fusion signal or 
-# channel attention
-# use spatial attention
 
 class ChannelAttention(nn.Module):
     def __init__(self, num_channels, reduction_ratio=4):
@@ -100,6 +95,220 @@ class SpatialAttention(nn.Module):
         x_out = self.sigmoid(x_out)
         return x * x_out
     
+# -------------ResNet Block (One)----------------------------------------
+class Resblock(nn.Module):
+    def __init__(self, channel=32):
+        super(Resblock, self).__init__()
+        
+        # Use the channel parameter instead of hardcoding 32
+        self.conv20 = nn.Conv2d(in_channels=channel, out_channels=channel, kernel_size=3, 
+                               stride=1, padding=1, bias=True)
+        self.conv21 = nn.Conv2d(in_channels=channel, out_channels=channel, kernel_size=3, 
+                               stride=1, padding=1, bias=True)
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        rs1 = self.relu(self.conv20(x))
+        rs1 = self.conv21(rs1)
+        rs = torch.add(x, rs1)
+        return rs
+
+
+# --- small helper: convex pan mixer (learnable, but constrained) ---
+class ConvexPanMixer(nn.Module):
+    """
+    Produces a PAN-like channel as a convex combination of RGB bands.
+    We parametrize weights with logits -> softmax so they are >=0 and sum to 1.
+    init_mode: 'avg' -> [1/3,1/3,1/3], 'luma' -> [0.2989, 0.5870, 0.1140]
+    """
+    def __init__(self, in_nc=3, init_mode='avg'):
+        super().__init__()
+        assert in_nc >= 1
+        self.in_nc = in_nc
+        self.logits = nn.Parameter(torch.zeros(in_nc))
+        with torch.no_grad():
+            if init_mode == 'luma' and in_nc >= 3:
+                w = torch.tensor([0.2989, 0.5870, 0.1140])
+                if in_nc > 3:  # distribute the rest equally if more channels
+                    extra = torch.full((in_nc-3,), 1e-6)
+                    w = torch.cat([w, extra], dim=0)
+                w = w / w.sum()
+            else:
+                w = torch.full((in_nc,), 1.0 / in_nc)
+            # inverse softmax init
+            self.logits.copy_(torch.log(w))
+
+    def forward(self, x):
+        # x: [B, C, H, W]
+        if self.in_nc == 1:
+            return x
+        w = torch.softmax(self.logits, dim=0)  # [C]
+        # weighted sum across channel dimension
+        pan = torch.sum(x * w.view(1, -1, 1, 1), dim=1, keepdim=True)
+        return pan
+
+
+class MTFNetFusion(nn.Module):
+    """
+    GLP-FS-in-the-loop + residual learning.
+    - pan_lp_i is generated per band with reflect padding, MTF blur, ↓, ↑
+    - detail_i = pan - pan_lp_i  (classical GLP-FS detail)
+    - detail_hat_i = detail_i + R(detail_i, ms_up_i)  (learn residual detail; last layer linear)
+    - gain_i = 1 + Δg(pan, pan_lp_i, mean(ms_up))     (unbounded residual gain)
+    - fused = ms_up + gain_i * detail_hat_i, then a light refinement residual
+
+    Args:
+        rgb_in_nc: channels of guidance image (3 for S2 RGB)
+        ms_in_nc:  number of MS bands in this branch (e.g., 4 for 10m, 6 for 20m)
+        out_nc:    equals ms_in_nc (kept for compatibility)
+        nf, nb, gc: RRDB/Resblock config
+        sensor:    affects default MTF values (kept for init only)
+        mtf_ratio: int or list[int] per band; the GLP scale used to form pan_lp
+                   (e.g., 4 for Wald 10m branch; 8 for a 20m->160m synthetic pair; 6 for 60m->360m)
+        pan_init:  'avg' or 'luma' init for convex mixer
+    """
+    def __init__(self, rgb_in_nc, ms_in_nc, out_nc, nf=32, nb=4, gc=32,
+                 sensor='S2', mtf_ratio=4, pan_init='avg'):
+        super().__init__()
+        self.ms_in_nc = ms_in_nc
+        self.rgb_in_nc = rgb_in_nc
+        self.sensor = sensor
+
+        # ---- PAN synthesis: convex, learnable but physically sane ----
+        self.pan_mixer = ConvexPanMixer(in_nc=rgb_in_nc, init_mode=pan_init)
+
+        # ---- Per-band MTF filters (kernel size from sigma; reflection pad per band) ----
+        # Build once; we still allow learning but they start as proper Gaussian-MTFs.
+        mtf_vals = self._default_mtf_values(sensor, ms_in_nc)
+        ratios = self._broadcast_ratio(mtf_ratio, ms_in_nc)  # list[int] per band
+
+        self.mtf_filters = nn.ModuleList()
+        self.mtf_pads = nn.ModuleList()
+        for i in range(ms_in_nc):
+            sigma, ksz = self._sigma_and_ksize_from_mtf(mtf_vals[i], ratios[i])
+            pad = ksz // 2
+            conv = nn.Conv2d(1, 1, kernel_size=ksz, padding=0, bias=False)
+            with torch.no_grad():
+                kernel = self._gaussian_kernel(ksz, sigma)
+                conv.weight.copy_(kernel)
+            self.mtf_filters.append(conv)
+            self.mtf_pads.append(nn.ReflectionPad2d(pad))
+        self.register_buffer('mtf_ratios', torch.tensor(ratios, dtype=torch.int32))
+
+        # ---- Detail residual network (last layer linear!) ----
+        self.detail_net = nn.Sequential(
+            nn.Conv2d(2, nf, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            *[RRDB(nf=nf, gc=gc) for _ in range(nb//2)],
+            nn.Conv2d(nf, 1, kernel_size=3, padding=1)  # linear output
+        )
+
+        # ---- Residual gain estimator (per-band; shared weights, 1-channel output) ----
+        # Input: [pan, pan_lp_i, ms_mean] -> Δg_i
+        self.gain_estimator = nn.Sequential(
+            nn.Conv2d(3, nf // 2, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(nf // 2, 1, kernel_size=1, padding=0)  # per-band scalar map
+        )
+
+        # ---- Light refinement on top of injected result ----
+        self.refinement = nn.Sequential(
+            nn.Conv2d(ms_in_nc + 1, nf, kernel_size=3, padding=1),
+            nn.LeakyReLU(0.2, inplace=True),
+            *[Resblock(channel=nf) for _ in range(nb//2)],
+            nn.Conv2d(nf, ms_in_nc, kernel_size=3, padding=1)
+        )
+
+    # ---------- init helpers ----------
+    def _default_mtf_values(self, sensor, C):
+        if sensor == 'WV2':
+            v = [0.32, 0.26, 0.28, 0.24, 0.22, 0.23, 0.23, 0.20]
+        elif sensor == 'IKONOS':
+            v = [0.26, 0.28, 0.29, 0.28]
+        else:  # Sentinel-2 (approx)
+            v = [0.29, 0.30, 0.28, 0.24, 0.23, 0.23, 0.25, 0.25, 0.27, 0.28, 0.30, 0.30]
+        if len(v) < C:
+            v = v + [0.28] * (C - len(v))
+        return v[:C]
+
+    def _broadcast_ratio(self, ratio, C):
+        if isinstance(ratio, int):
+            return [ratio] * C
+        assert isinstance(ratio, (list, tuple)) and len(ratio) == C, \
+            "mtf_ratio must be int or list/tuple of length ms_in_nc"
+        return list(map(int, ratio))
+
+    def _sigma_and_ksize_from_mtf(self, mtf_value, ratio):
+        # sigma derived from MTF at Nyquist (same as your classical code)
+        sigma = float(-ratio * np.sqrt(2) * np.log(mtf_value) / (2 * np.pi ** 2))
+        # robust kernel size: cover ~4 sigmas; ensure odd and >=3
+        ksz = max(3, 2 * int(4 * sigma + 0.5) + 1)
+        return sigma, ksz
+
+    def _gaussian_kernel(self, ksz, sigma):
+        ax = torch.arange(ksz) - (ksz // 2)
+        xx, yy = torch.meshgrid(ax, ax, indexing='ij')
+        ker = torch.exp(-(xx**2 + yy**2) / (2 * sigma**2))
+        ker = ker / ker.sum()
+        return ker.view(1, 1, ksz, ksz)
+
+    # ---------- GLP-FS low-pass per band ----------
+    # ---------- GLP-FS low-pass per band (robust sizing) ----------
+    def _simulate_lp(self, pan, filt, pad_layer, ratio: int):
+        """
+        reflect-pad -> blur (size preserved) -> ↓ to integer LR size -> ↑ back to (H,W)
+        Using explicit 'size' avoids PyTorch scale_factor rounding drift (510 vs 512).
+        """
+        # blur at full res (size preserved because of reflect pad)
+        pan_b = filt(pad_layer(pan))                     # [B,1,H,W]
+        if ratio > 1:
+            _, _, H, W = pan_b.shape
+            Hlr = max(1, H // ratio)
+            Wlr = max(1, W // ratio)
+            # ↓ area to exact LR lattice
+            pan_b = F.interpolate(pan_b, size=(Hlr, Wlr), mode='area')
+            # ↑ bicubic exactly back to (H,W)
+            pan_b = F.interpolate(pan_b, size=(H, W), mode='bicubic', align_corners=False)
+        return pan_b
+
+    def forward(self, rgb, ms):
+        # --- PAN synthesis (convex convex-combo) ---
+        pan = self.pan_mixer(rgb)  # [B,1,H,W]
+
+        # --- Upsample MS if needed: check both H and W ---
+        if ms.shape[-2:] != pan.shape[-2:]:
+            ms_up = F.interpolate(ms, size=pan.shape[-2:], mode='bilinear', align_corners=False)
+        else:
+            ms_up = ms
+
+        B, C, H, W = ms_up.shape
+        ms_mean = ms_up.mean(dim=1, keepdim=True)
+
+        fused_bands, detail_hats = [], []
+
+        for i in range(self.ms_in_nc):
+            ratio_i = int(self.mtf_ratios[i].item())
+            pan_lp_i = self._simulate_lp(pan, self.mtf_filters[i], self.mtf_pads[i], ratio_i)
+            # shapes match pan exactly -> no broadcast error
+            detail_i = pan - pan_lp_i
+
+            # learn residual detail (linear head)
+            res_d_i = self.detail_net(torch.cat([detail_i, ms_up[:, i:i+1]], dim=1))
+            detail_hat_i = detail_i + res_d_i
+            
+            # residual gain around 1
+            dgi = self.gain_estimator(torch.cat([pan, pan_lp_i, ms_mean], dim=1))
+            gain_i = 1.0 + dgi
+
+            band_i = ms_up[:, i:i+1] + gain_i * detail_hat_i
+            fused_bands.append(band_i)
+            detail_hats.append(detail_hat_i)
+
+        enhanced_ms = torch.cat(fused_bands, dim=1)
+        mean_detail = torch.mean(torch.cat(detail_hats, dim=1), dim=1, keepdim=True)
+        refined = self.refinement(torch.cat([enhanced_ms, mean_detail], dim=1))
+        fused = enhanced_ms + refined
+        return fused
 class FusionRRDBNet(nn.Module):
     def __init__(self, rgb_in_nc, ms_in_nc, out_nc, nf=64, nb=3, gc=32, use_adain=False, use_channel_attention=False, use_spatial_attention=False):
         super(FusionRRDBNet, self).__init__()
@@ -280,9 +489,13 @@ class FusionNetwork(pl.LightningModule):
         # self.rrdb_block = RRDB(channels=64)  # Example channel number, adjust as necessary
         self.hparams.lr = 1e-4
         
-        self.rrdb_block_60_fusion = FusionRRDBNet(3, 12, 2, nf=64, nb=5, gc=32, use_adain=False)
-        self.rrdb_block_20_fusion = FusionRRDBNet(3, 10, 6, nf=64, nb=5, gc=32, use_adain=False)
-        self.rrdb_block_10_fusion = FusionRRDBNet(3, 4, 4, nf=64, nb=5, gc=32, use_adain=False)
+
+        
+        self.rrdb_block_10_fusion = MTFNetFusion(3, 4, 4, nf=32, nb=3, gc=16, sensor='S2', mtf_ratio=4, pan_init='luma')
+        self.rrdb_block_20_fusion = MTFNetFusion(3, 6, 6, nf=32, nb=3, gc=16, sensor='S2', mtf_ratio=8, pan_init='luma')
+        self.rrdb_block_60_fusion = MTFNetFusion(3, 2, 2, nf=32, nb=3, gc=16, sensor='S2', mtf_ratio=24, pan_init='luma')
+
+
 
         self.mode = mode
         #self.GSD = GSD
@@ -322,6 +535,8 @@ class FusionNetwork(pl.LightningModule):
             x12 = inputs[:, 9, :, :].unsqueeze(1) # S2:WaterVapor (Band 9)
 
 
+        #print dict inputs
+        #print(inputs.keys())
         # Training mode
         if self.mode == 'train':
             # 10m branch
@@ -332,22 +547,13 @@ class FusionNetwork(pl.LightningModule):
             
             # 20m branch
             fusion_signal_20 = interpolate(torch.cat([x1, x2, x3], dim=1), 1/2, blur=True, boxcar=True)
-            inputs_ms_10m_80m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 1/8, blur=True, boxcar=True)
             inputs_ms_20m_160m = interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 1/8, blur=True, boxcar=True)
-            x_80m_to_20m = interpolate(inputs_ms_10m_80m, 4)
-            del inputs_ms_10m_80m
             x_160m_to_20m = interpolate(inputs_ms_20m_160m, 8)
             del inputs_ms_20m_160m
 
             # 60m branch
             fusion_signal_60 = interpolate(torch.cat([x1, x2, x3], dim=1), 1/6, blur=True, boxcar=True)
-            inputs_ms_10m_240m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 1/24, blur=True, boxcar=True)
-            inputs_ms_20m_480m = interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 1/24, blur=True, boxcar=True)
             inputs_ms_60m_1440m = interpolate(torch.cat([x11, x12], dim=1), 1/24, blur=True, boxcar=True)
-            x_240m_to_60m = interpolate(inputs_ms_10m_240m, 4)
-            del inputs_ms_10m_240m
-            x_480m_to_60m = interpolate(inputs_ms_20m_480m, 8)
-            del inputs_ms_20m_480m
             x_1440m_to_60m = interpolate(inputs_ms_60m_1440m, 24)
             del inputs_ms_60m_1440m
 
@@ -370,13 +576,13 @@ class FusionNetwork(pl.LightningModule):
             # Use the same fusion signal for all branches
             fusion_signal_60 = fusion_signal_20 = fusion_signal_10 = fusion_signal
 
-            # Interpolate input bands
-            x_40m_to_10m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4) #interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4)
-            x_80m_to_20m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4)#interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4)
-            x_160m_to_20m = interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 4)#interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 8)
-            x_240m_to_60m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4)#interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4)
-            x_480m_to_60m = interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 4) #interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 8)
-            x_1440m_to_60m = interpolate(torch.cat([x11, x12], dim=1), 4) #interpolate(torch.cat([x11, x12], dim=1), 24)
+
+
+                                          
+            # Interpolate input bands (eval mode: upsample by native ratio)
+            x_40m_to_10m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4)
+            x_160m_to_20m = interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 8)
+            x_1440m_to_60m = interpolate(torch.cat([x11, x12], dim=1), 24)
 
         # 10m branch
         x_ms_10 = x_40m_to_10m
@@ -385,16 +591,17 @@ class FusionNetwork(pl.LightningModule):
         del x_ms_10, fusion_signal_10, x_40m_to_10m
 
         # 20m branch output
-        x_ms_20 = torch.cat([x_80m_to_20m, x_160m_to_20m], dim=1)
+        x_ms_20 = x_160m_to_20m
         output_20 = self.rrdb_block_20_fusion(fusion_signal_20, x_ms_20)
         GT_out_20 = torch.cat([x5, x6, x7, x8, x9, x10], dim=1)
-        del x_ms_20, fusion_signal_20, x_80m_to_20m, x_160m_to_20m
+        del x_ms_20, fusion_signal_20, x_160m_to_20m
 
         # 60m branch output
-        x_ms_60 = torch.cat([x_240m_to_60m, x_480m_to_60m, x_1440m_to_60m], dim=1)
+        x_ms_60 = x_1440m_to_60m
         output_60 = self.rrdb_block_60_fusion(fusion_signal_60, x_ms_60)
         GT_out_60 = torch.cat([x11, x12], dim=1)
-        del x_ms_60, fusion_signal_60, x_240m_to_60m, x_480m_to_60m, x_1440m_to_60m
+        del x_ms_60, fusion_signal_60, x_1440m_to_60m
+
 
         return output_10, output_20, output_60, GT_out_10, GT_out_20, GT_out_60
 
@@ -409,7 +616,6 @@ class FusionNetwork(pl.LightningModule):
                 self.l1_criterion(output_60, GT_out_60))
         
         # Calculate L1 ERGAS loss for each resolution
-
 
         self.log("loss_train", loss, prog_bar=True, sync_dist=True, on_epoch=True)
         
@@ -544,11 +750,14 @@ class FusionNetwork(pl.LightningModule):
 
             return dummy_metric  # Return a dummy metric
     
+
     
     def predict_step(self, batch, batch_idx, fusion_signal=None):
         # Get outputs from all three branches
         output_10, output_20, output_60, GT_out_10, GT_out_20, GT_out_60 = self(batch, fusion_signal=fusion_signal)
         
+        # Helper function to create normalized grid (reusing from training)
+
 
         # Log all three resolutions
         self.logger.experiment.add_image('Predict/10m/Output', make_norm_grid(output_10), batch_idx)
