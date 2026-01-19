@@ -1,10 +1,13 @@
+import math
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import torchvision
 from torch.nn.functional import interpolate
+from torch.optim import AdamW
+from torch.optim.lr_scheduler import LambdaLR
 from fm4cs.arch.rrdbnet_arch import RRDBNet
-from fm4cs.arch.rrdbnet_fuse_arch import FusionRRDBNet
+from fm4cs.arch.rrdbnet_fuse_arch import MTFNetFusion
 import torchvision.transforms as transforms
 from torch import Tensor
 
@@ -250,23 +253,38 @@ def gram_schmidt_fusion(ms_img, pan_img):
     return pansharpened
 
 class FusionNetwork(pl.LightningModule):
-    def __init__(self,mode='train',GSD='GSD',lr=1e-4):
+    def __init__(self, mode='train', GSD='GSD', base_lr=1e-4,
+                 weight_decay=1e-4, warmup_ratio=0.05, lf_lambda: float = 0.075,
+                 min_lr_ratio=1/20):
         super(FusionNetwork, self).__init__()
-        #self.hparams.lr = 1e-4
 
         self.save_hyperparameters()
         self.automatic_optimization = False
         self.mode = mode
-        self.lr = lr  # Store learning rate as instance variable
 
+        self.rrdb_block_10_fusion = MTFNetFusion(3, 4, 4, nf=32, nb=3, gc=16, sensor='S2', mtf_ratio=4, pan_init='luma')
+        self.rrdb_block_20_fusion = MTFNetFusion(3, 6, 6, nf=32, nb=3, gc=16, sensor='S2', mtf_ratio=8, pan_init='luma')
+        self.rrdb_block_60_fusion = MTFNetFusion(3, 2, 2, nf=32, nb=3, gc=16, sensor='S2', mtf_ratio=24, pan_init='luma')
 
-        self.rrdb_block_60_fusion = FusionRRDBNet(3, 12, 2, nf=64, nb=5, gc=32, use_adain=False)
-        self.rrdb_block_20_fusion = FusionRRDBNet(3, 10, 6, nf=64, nb=5, gc=32, use_adain=False)
-        self.rrdb_block_10_fusion = FusionRRDBNet(3, 4, 4, nf=64, nb=5, gc=32, use_adain=False)
-
-        self.mode = mode
-        #self.GSD = GSD
         self.l1_criterion = nn.L1Loss()
+        self.lf_lambda = lf_lambda
+
+    @torch.no_grad()
+    def _lowfreq_from_gt(self, x: torch.Tensor, ratio: int) -> torch.Tensor:
+        """
+        Create a LF version via boxcar ↓ ratio and ↑ ratio.
+        Using GT here matches the way you synthesize the MS-up inputs under Wald.
+        We keep it @no_grad to reduce graph size; for the pred we compute grads.
+        """
+        x_lr = interpolate(x, 1/ratio, blur=True, boxcar=True)
+        x_lf = interpolate(x_lr, ratio)
+        return x_lf
+
+    def _lowfreq_pred(self, x: torch.Tensor, ratio: int) -> torch.Tensor:
+        # same as above, BUT keep it differentiable for the prediction
+        x_lr = interpolate(x, 1/ratio, blur=True, boxcar=True)
+        x_lf = interpolate(x_lr, ratio)
+        return x_lf
 
 
     def forward(self, inputs, fusion_signal=None):
@@ -318,22 +336,13 @@ class FusionNetwork(pl.LightningModule):
 
             # 20m branch
             fusion_signal_20 = interpolate(torch.cat([x1, x2, x3], dim=1), 1/2, blur=True, boxcar=True)
-            inputs_ms_10m_80m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 1/8, blur=True, boxcar=True)
             inputs_ms_20m_160m = interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 1/8, blur=True, boxcar=True)
-            x_80m_to_20m = interpolate(inputs_ms_10m_80m, 4)
-            del inputs_ms_10m_80m
             x_160m_to_20m = interpolate(inputs_ms_20m_160m, 8)
             del inputs_ms_20m_160m
 
             # 60m branch
             fusion_signal_60 = interpolate(torch.cat([x1, x2, x3], dim=1), 1/6, blur=True, boxcar=True)
-            inputs_ms_10m_240m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 1/24, blur=True, boxcar=True)
-            inputs_ms_20m_480m = interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 1/24, blur=True, boxcar=True)
             inputs_ms_60m_1440m = interpolate(torch.cat([x11, x12], dim=1), 1/24, blur=True, boxcar=True)
-            x_240m_to_60m = interpolate(inputs_ms_10m_240m, 4)
-            del inputs_ms_10m_240m
-            x_480m_to_60m = interpolate(inputs_ms_20m_480m, 8)
-            del inputs_ms_20m_480m
             x_1440m_to_60m = interpolate(inputs_ms_60m_1440m, 24)
             del inputs_ms_60m_1440m
 
@@ -354,10 +363,7 @@ class FusionNetwork(pl.LightningModule):
 
             # Interpolate input bands
             x_40m_to_10m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4)
-            x_80m_to_20m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4)
             x_160m_to_20m = interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 8)
-            x_240m_to_60m = interpolate(torch.cat([x1, x2, x3, x4], dim=1), 4)
-            x_480m_to_60m = interpolate(torch.cat([x5, x6, x7, x8, x9, x10], dim=1), 8)
             x_1440m_to_60m = interpolate(torch.cat([x11, x12], dim=1), 24)
 
         # 10m branch
@@ -367,65 +373,83 @@ class FusionNetwork(pl.LightningModule):
         del x_ms_10, fusion_signal_10, x_40m_to_10m
 
         # 20m branch output
-        x_ms_20 = torch.cat([x_80m_to_20m, x_160m_to_20m], dim=1)
+        x_ms_20 = torch.cat([x_160m_to_20m], dim=1)
         output_20 = self.rrdb_block_20_fusion(fusion_signal_20, x_ms_20)
         GT_out_20 = torch.cat([x5, x6, x7, x8, x9, x10], dim=1)
-        del x_ms_20, fusion_signal_20, x_80m_to_20m, x_160m_to_20m
+        del x_ms_20, fusion_signal_20, x_160m_to_20m
 
         # 60m branch output
-        x_ms_60 = torch.cat([x_240m_to_60m, x_480m_to_60m, x_1440m_to_60m], dim=1)
+        x_ms_60 = torch.cat([x_1440m_to_60m], dim=1)
         output_60 = self.rrdb_block_60_fusion(fusion_signal_60, x_ms_60)
         GT_out_60 = torch.cat([x11, x12], dim=1)
-        del x_ms_60, fusion_signal_60, x_240m_to_60m, x_480m_to_60m, x_1440m_to_60m
+        del x_ms_60, fusion_signal_60, x_1440m_to_60m
 
         return output_10, output_20, output_60, GT_out_10, GT_out_20, GT_out_60
     def training_step(self, batch, batch_idx):
         opt_10m, opt_20m, opt_60m = self.optimizers()
-        losses = []
 
-        # Train 10m branch
-        output_10, _, _, GT_out_10, _, _ = self(batch)  # Only get needed outputs
+        # Single forward pass for all branches
+        output_10, output_20, output_60, GT_out_10, GT_out_20, GT_out_60 = self(batch)
+
+        # Primary L1 losses
+        loss_10_l1 = self.l1_criterion(output_10, GT_out_10)
+        loss_20_l1 = self.l1_criterion(output_20, GT_out_20)
+        loss_60_l1 = self.l1_criterion(output_60, GT_out_60)
+
+        # Low-frequency consistency L1 (blur↓↑)
+        lf_pred_10 = self._lowfreq_pred(output_10, ratio=4)
+        lf_gt_10 = self._lowfreq_from_gt(GT_out_10, ratio=4)
+        loss_10_lf = self.l1_criterion(lf_pred_10, lf_gt_10)
+
+        lf_pred_20 = self._lowfreq_pred(output_20, ratio=8)
+        lf_gt_20 = self._lowfreq_from_gt(GT_out_20, ratio=8)
+        loss_20_lf = self.l1_criterion(lf_pred_20, lf_gt_20)
+
+        lf_pred_60 = self._lowfreq_pred(output_60, ratio=24)
+        lf_gt_60 = self._lowfreq_from_gt(GT_out_60, ratio=24)
+        loss_60_lf = self.l1_criterion(lf_pred_60, lf_gt_60)
+
+        # Combine branch losses: L1 + lf_lambda * LF_loss
+        w = self.lf_lambda
+        loss_10 = loss_10_l1 + w * loss_10_lf
+        loss_20 = loss_20_l1 + w * loss_20_lf
+        loss_60 = loss_60_l1 + w * loss_60_lf
+
+        # Step each optimizer independently
+        # 10m
         opt_10m.zero_grad()
-        loss_10 = self.l1_criterion(output_10, GT_out_10)
         self.manual_backward(loss_10)
         opt_10m.step()
-        self.log("loss_10m", loss_10, prog_bar=True)
-        losses.append(loss_10.detach())
-        # Clear memory
-        #el output_10, GT_out_10, loss_10
-        #torch.cuda.empty_cache()
-
-        # Train 20m branch  
-        _, output_20, _, _, GT_out_20, _ = self(batch)  # Only get needed outputs
+        # 20m
         opt_20m.zero_grad()
-        loss_20 = self.l1_criterion(output_20, GT_out_20)
         self.manual_backward(loss_20)
         opt_20m.step()
-        self.log("loss_20m", loss_20, prog_bar=True)
-        losses.append(loss_20.detach())
-        # Clear memory
-        #del output_20, GT_out_20, loss_20
-        #torch.cuda.empty_cache()
-
-        # Train 60m branch
-        _, _, output_60, _, _, GT_out_60 = self(batch)  # Only get needed outputs
+        # 60m
         opt_60m.zero_grad()
-        loss_60 = self.l1_criterion(output_60, GT_out_60)
         self.manual_backward(loss_60)
         opt_60m.step()
-        self.log("loss_60m", loss_60, prog_bar=True)
-        losses.append(loss_60.detach())
-        # Clear memory
-        #del output_60, GT_out_60, loss_60
-        #torch.cuda.empty_cache()
 
-        # Log combined loss for monitoring
-        total_loss = sum(losses) / len(losses)
+        # Logging
+        self.log("loss_10m_l1", loss_10_l1, prog_bar=False)
+        self.log("loss_20m_l1", loss_20_l1, prog_bar=False)
+        self.log("loss_60m_l1", loss_60_l1, prog_bar=False)
+
+        total_loss = (loss_10 + loss_20 + loss_60) / 3
         self.log("loss_train", total_loss, prog_bar=True)
-        del losses
 
-        if batch_idx == 0:
-            self.trainer.train_dataloader.dataset.epoch += 1
+        # Step LR schedulers
+        try:
+            sch10, sch20, sch60 = self.lr_schedulers()
+            sch10.step()
+            sch20.step()
+            sch60.step()
+        except Exception:
+            pass
+
+        # Cleanup
+        del lf_pred_10, lf_pred_20, lf_pred_60, lf_gt_10, lf_gt_20, lf_gt_60
+        del loss_10_l1, loss_20_l1, loss_60_l1, loss_10_lf, loss_20_lf, loss_60_lf
+        del loss_10, loss_20, loss_60
     # def training_step(self, batch, batch_idx):
     #     # Forward pass returns outputs and ground truth for all resolutions
 
@@ -706,13 +730,46 @@ class FusionNetwork(pl.LightningModule):
         # Return all outputs for GSD mode
         return output_10, output_20, output_60, GT_out_10, GT_out_20, GT_out_60
 
-    # def configure_optimizers(self):
-    #     optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
-    #     return optimizer
+    def _mk_sched(self, opt):
+        def lr_lambda(step):
+            t = getattr(self, "trainer", None)
+            if t is None:
+                return 1.0  # before Trainer attaches
+
+            # 1) prefer an explicit max_steps if provided
+            total = getattr(t, "max_steps", 0) or 0
+            if total <= 0:
+                # 2) try finite num_training_batches
+                nb = getattr(t, "num_training_batches", None)
+                if isinstance(nb, int):
+                    accum = max(1, getattr(t, "accumulate_grad_batches", 1))
+                    steps_per_epoch = max(1, math.ceil(nb / accum))
+                    total = steps_per_epoch * max(1, getattr(t, "max_epochs", 1))
+
+            # 3) final fallback for iterable/infinite datasets
+            if not total or total == float("inf"):
+                total = getattr(self.hparams, "sched_total_steps", 100_000)
+
+            warm = max(1, int(self.hparams.warmup_ratio * total))
+            if step < warm:
+                return (step + 1) / warm
+
+            prog = (step - warm) / max(1, total - warm)
+            cosine = 0.5 * (1 + math.cos(math.pi * prog))
+            return self.hparams.min_lr_ratio + (1 - self.hparams.min_lr_ratio) * cosine
+
+        return LambdaLR(opt, lr_lambda=lr_lambda)
+
     def configure_optimizers(self):
-        # Create separate optimizers for each network
-        opt_10m = torch.optim.Adam(self.rrdb_block_10_fusion.parameters(), lr=self.lr)
-        opt_20m = torch.optim.Adam(self.rrdb_block_20_fusion.parameters(), lr=self.lr)
-        opt_60m = torch.optim.Adam(self.rrdb_block_60_fusion.parameters(), lr=self.lr)
-        
-        return [opt_10m, opt_20m, opt_60m]
+        opt_10 = AdamW(self.rrdb_block_10_fusion.parameters(),
+                       lr=self.hparams.base_lr, weight_decay=self.hparams.weight_decay)
+        opt_20 = AdamW(self.rrdb_block_20_fusion.parameters(),
+                       lr=self.hparams.base_lr, weight_decay=self.hparams.weight_decay)
+        opt_60 = AdamW(self.rrdb_block_60_fusion.parameters(),
+                       lr=self.hparams.base_lr, weight_decay=self.hparams.weight_decay)
+
+        s10, s20, s60 = self._mk_sched(opt_10), self._mk_sched(opt_20), self._mk_sched(opt_60)
+        return ([opt_10, opt_20, opt_60],
+                [{"scheduler": s10, "interval": "step"},
+                 {"scheduler": s20, "interval": "step"},
+                 {"scheduler": s60, "interval": "step"}])
